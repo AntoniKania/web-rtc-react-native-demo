@@ -1,10 +1,24 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SafeAreaView, Text, FlatList, View, StyleSheet } from 'react-native';
-import { RTCPeerConnection } from 'react-native-webrtc';
+import { RTCPeerConnection, RTCSessionDescription, RTCIceCandidate } from 'react-native-webrtc';
 import io from 'socket.io-client';
 import uuid from 'react-native-uuid';
 
 const signalingServerURL = 'http://10.0.2.2:3030';
+
+const iceServers = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun.l.google.com:5349" },
+  { urls: "stun:stun1.l.google.com:3478" },
+  { urls: "stun:stun1.l.google.com:5349" },
+  { urls: "stun:stun2.l.google.com:19302" },
+  { urls: "stun:stun2.l.google.com:5349" },
+  { urls: "stun:stun3.l.google.com:3478" },
+  { urls: "stun:stun3.l.google.com:5349" },
+  { urls: "stun:stun4.l.google.com:19302" },
+  { urls: "stun:stun4.l.google.com:5349" }
+];
+
 
 const App = () => {
   const [peers, setPeers] = useState([]); // List of peers with connection status
@@ -13,7 +27,7 @@ const App = () => {
   const peerIdRef = useRef(null);
 
   const createPeerConnection = (peerId) => {
-    const peerConnection = new RTCPeerConnection();
+    const peerConnection = new RTCPeerConnection({ iceServers });
 
     // Set up event handlers
     peerConnection.ondatachannel = (event) => {
@@ -23,9 +37,13 @@ const App = () => {
     };
 
     peerConnection.onicecandidate = (event) => {
+      console.log("Sending ice cadidates");
       if (event.candidate) {
-        socket.emit('ice-candidate', { target: peerId, candidate: event.candidate });
+        socket.emit('messageOne', { target: peerId, from: peerIdRef.current, candidate: event.candidate });
       }
+    peerConnection.oniceconnectionstatechange = () => {
+      console.log(`ICE connection state: ${peerConnection.iceConnectionState}`);
+    };
     };
 
     return peerConnection;
@@ -49,29 +67,30 @@ const App = () => {
 
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
-
-    socket.emit('offer', { target: peerId, offer });
+    socket.emit('messageOne', { target: peerId, from: peerIdRef.current, offer });
 
     setPeers((prev) => [...prev, { id: peerId, status: 'connecting' }]);
   };
 
-  const handleOffer = async (offer, from) => {
-    const peerConnection = createPeerConnection(from);
-    connections[from] = peerConnection;
-
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+  const handleOffer = async (sdp, sender) => {
+    const peerConnection = createPeerConnection(sender);
+    connections[sender] = peerConnection;
+    await peerConnection.setRemoteDescription(sdp);
+    console.log("remote description set")
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
 
-    socket.emit('answer', { target: from, answer });
+    socket.emit('messageOne', { target: sender, from: peerIdRef.current, answer });
+    console.log("message emitted: " + answer)
 
-    setPeers((prev) => [...prev, { id: from, status: 'connecting' }]);
+    setPeers((prev) => [...prev, { id: sender, status: 'connecting' }]);
   };
 
   useEffect(() => {    
     socket.on('message', (message) => {
       console.log('Received event: message', message);
       console.log("message target: " + message.target);
+      console.log("message target: " + message.payload);
       console.log("peerId: " + peerIdRef.current);
       console.log(message.target === peerIdRef.current)
       if (message.target === peerIdRef.current) {
@@ -87,6 +106,26 @@ const App = () => {
               initiateConnection(peerId);
             }
           });
+        } else if(message?.offer) {
+          console.log("type present")
+          const offer = message.offer
+          const from = message.from
+          console.log("sdp:" + offer.sdp)
+          handleOffer(offer, from);
+        } else if (message?.answer) {
+          const from = message.from;
+          console.log("Recieved answer from: " + from)
+          if (connections[from]) {
+            connections[from].setRemoteDescription(message.answer);
+            console.log("remote description set for answer")
+          }
+        } else if (message?.candidate) {
+          if (connections[message.from]) {
+            connections[message.from].addIceCandidate(new RTCIceCandidate(message.candidate))
+            .then(() => console.log('ICE candidate added successfully'))
+            .catch((e) => console.error('Error adding ICE candidate:', e));
+            console.log(connections[message.from].iceServers)
+          }
         }
       } else {
         console.log('Message not intended for this peer, ignoring.');
@@ -112,12 +151,13 @@ const App = () => {
     });
 
     socket.on('offer', async ({ offer, from }) => {
+      console.log("Recieved offer from: " + from)
       await handleOffer(offer, from);
     });
 
     socket.on('answer', async ({ answer, from }) => {
       if (connections[from]) {
-        await connections[from].setRemoteDescription(new RTCSessionDescription(answer));
+        await connections[from].setRemoteDescription(new RTCSessionDescription(answer, "answer"));
       }
     });
 
