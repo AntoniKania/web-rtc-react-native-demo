@@ -31,7 +31,15 @@
         {
           "photosPermission": "Allow $(PRODUCT_NAME) to access your photos"
         }
-      ]
+      ],
+      [
+       "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]  
     ]
   }
 }

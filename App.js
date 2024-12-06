@@ -3,8 +3,13 @@ import { SafeAreaView, Text, FlatList, View, StyleSheet } from 'react-native';
 import { RTCPeerConnection, RTCSessionDescription, RTCIceCandidate } from 'react-native-webrtc';
 import io from 'socket.io-client';
 import uuid from 'react-native-uuid';
+import { StatusBar } from 'expo-status-bar';
 
-const signalingServerURL = 'http://10.0.2.2:3030';
+// const signalingServerURL = 'http://10.0.2.2:3030';
+const signalingServerURL = process.env.EXPO_PUBLIC_SIGNALING_SERVER_URL;
+const TOKEN =  process.env.EXPO_PUBLIC_SIGNALING_SERVER_TOKEN;
+const TURN_PASSWORD = process.env.EXPO_PUBLIC_TURN_PASSWORD;
+const TURN_SERVER_URL = process.env.EXPO_PUBLIC_TURN_SERVER_URL
 
 const iceServers = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -16,14 +21,19 @@ const iceServers = [
   { urls: "stun:stun3.l.google.com:3478" },
   { urls: "stun:stun3.l.google.com:5349" },
   { urls: "stun:stun4.l.google.com:19302" },
-  { urls: "stun:stun4.l.google.com:5349" }
+  { urls: "stun:stun4.l.google.com:5349" },
+  { urls: TURN_SERVER_URL, username: "webrtc-react-native-demo", credential: TURN_PASSWORD }
 ];
 
 
 const App = () => {
   const [peers, setPeers] = useState([]); // List of peers with connection status
   const connections = {}; // Map to hold RTCPeerConnection objects
-  const socket = io(signalingServerURL);
+  const socket = io(signalingServerURL, {
+    auth: {
+      token: TOKEN,
+    },
+  });
   const peerIdRef = useRef(null);
 
   const createPeerConnection = (peerId) => {
@@ -93,15 +103,13 @@ const App = () => {
       console.log("message target: " + message.payload);
       console.log("peerId: " + peerIdRef.current);
       console.log(message.target === peerIdRef.current)
-      if (message.target === peerIdRef.current) {
-        console.log(`Message is for this peer: ${peerIdRef.current}`);
-  
+      if (message.target === peerIdRef.current) {  
         if (message.payload?.connections) {
           const connections = message.payload.connections;
           console.log('Extracted connections:', connections);
   
           connections.forEach((peer) => {
-            const peerId = peer.peerId; // Replace with appropriate property name
+            const peerId = peer.peerId;
             if (!connections[peerId]) {
               initiateConnection(peerId);
             }
@@ -126,6 +134,18 @@ const App = () => {
             .catch((e) => console.error('Error adding ICE candidate:', e));
             console.log(connections[message.from].iceServers)
           }
+        }
+      } else if (message.target === "all"){
+        if (message.payload?.action === 'close') {
+          const disconnectingPeerId = message.from;
+          console.log(`Peer disconnected: ${disconnectingPeerId}`);
+    
+          if (connections[disconnectingPeerId]) {
+            connections[disconnectingPeerId].close();
+            delete connections[disconnectingPeerId];
+          }
+    
+          setPeers((prev) => prev.filter((peer) => peer.id !== disconnectingPeerId));
         }
       } else {
         console.log('Message not intended for this peer, ignoring.');
@@ -175,6 +195,7 @@ const App = () => {
 
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar barStyle='light-content' />
       <Text style={styles.title}>Connected Peers</Text>
       <FlatList
         data={peers}
@@ -195,20 +216,23 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 16,
-    backgroundColor: '#fff',
+    backgroundColor: '#28292b',
   },
   title: {
     fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 16,
+    color: 'white',
   },
   peerItem: {
     padding: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#ccc',
+    color: 'white',
   },
   peerText: {
     fontSize: 16,
+    color: 'white',
   },
 });
 
